@@ -1,5 +1,5 @@
 import { NextResponse, NextRequest } from "next/server"
-import { Client } from 'pg'
+import { db } from "@/lib/database"
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url!)
@@ -12,19 +12,7 @@ export async function GET(req: NextRequest) {
   const category = searchParams.get("category") || "All Categories"
   const rating = searchParams.get("rating") || "Any Rating"
 
-  // Get PostgreSQL client
-  const client = new Client({
-    host: process.env.POSTGRES_HOST,
-    port: parseInt(process.env.POSTGRES_PORT || '5432'),
-    database: process.env.POSTGRES_DB,
-    user: process.env.POSTGRES_USER,
-    password: process.env.POSTGRES_PASSWORD,
-    ssl: process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : false
-  });
-
   try {
-    await client.connect();
-
     // Build SQL query dynamically
     const whereClauses: string[] = []
     const params: (string | number)[] = []
@@ -60,15 +48,13 @@ export async function GET(req: NextRequest) {
 
     // Get total count
     const countQuery = `SELECT COUNT(*) as count FROM businesses b ${where}`
-    const countResult = await client.query(countQuery, params)
-    const total = parseInt(countResult.rows[0]?.count || '0')
+    const total = await db.getCount(countQuery, params)
 
-    // Get paginated results with proper sorting to ensure unique pagination
-    let orderBy = "b.data_id ASC" // Always include a unique identifier for consistent sorting
+    // Get paginated results with proper sorting
+    let orderBy = "b.data_id ASC"
     const queryParams = [...params]
     
     if (searchQuery) {
-      // If there's a search query, prioritize exact matches and partial matches
       orderBy = `
         CASE 
           WHEN LOWER(b.title) LIKE $${paramIndex} THEN 1
@@ -83,23 +69,23 @@ export async function GET(req: NextRequest) {
       queryParams.push(`%${searchQuery}%`)
       paramIndex++
     } else {
-      // Default sorting when no search query
       orderBy = "b.rating DESC, b.reviews DESC, b.data_id ASC"
     }
 
     const sqlQuery = `SELECT * FROM businesses b ${where} ORDER BY ${orderBy} LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`
     queryParams.push(pageSize, offset)
-    const result = await client.query(sqlQuery, queryParams)
-    const businesses = result.rows
+    
+    const businesses = await db.getMany(sqlQuery, queryParams)
 
-    await client.end()
     return NextResponse.json({ total, businesses })
   } catch (error) {
-    console.error('Database query error:', error);
-    await client.end()
+    console.error('Database query error:', error)
     return NextResponse.json(
-      { error: 'Database query failed', details: error instanceof Error ? error.message : 'Unknown error' },
+      { 
+        error: 'Database query failed', 
+        details: error instanceof Error ? error.message : 'Unknown error' 
+      },
       { status: 500 }
-    );
+    )
   }
-} 
+}
