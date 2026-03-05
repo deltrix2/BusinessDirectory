@@ -2,16 +2,15 @@ import { QueryResult, Pool, PoolConfig } from 'pg'
 
 // Нова конфігурація: використовуємо DATABASE_URL, якщо він є, 
 // або збираємо окремі параметри (для зворотної сумісності)
-const dbConfig: PoolConfig = process.env.DATABASE_URL 
-  ? {
-      connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false },
-      // Налаштування для serverless (залишаємо ваші)
-      max: 1,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
-      maxUses: 7500,
-    }
+// lib/database.ts
+// Замініть рядок конфігурації на цей:
+const dbConfig: PoolConfig = {
+  connectionString: 'postgresql://postgres.ewbeijhhadjozknrhqic:Timon7876__@aws-1-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require',
+  max: 1,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+  maxUses: 7500,
+}
   : {
       host: process.env.POSTGRES_HOST,
       port: parseInt(process.env.POSTGRES_PORT || '5432'),
