@@ -16,19 +16,14 @@ export async function GET() {
       GROUP BY sc.category_id
       ORDER BY total_businesses DESC
     `
-
+    
     const categories = await db.getMany(query)
 
     return NextResponse.json({ categories })
-
   } catch (error) {
     console.error("Error fetching service categories:", error)
-
     return NextResponse.json(
-      { 
-        error: "Failed to fetch service categories",
-        details: error instanceof Error ? error.message : "Unknown error"
-      },
+      { error: "Failed to fetch service categories", details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     )
   }
