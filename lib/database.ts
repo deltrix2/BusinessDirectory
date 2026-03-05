@@ -1,19 +1,29 @@
 import { QueryResult, Pool, PoolConfig } from 'pg'
 
-// Database configuration
-const dbConfig: PoolConfig = {
-  host: process.env.POSTGRES_HOST,
-  port: parseInt(process.env.POSTGRES_PORT || '5432'),
-  database: process.env.POSTGRES_DB,
-  user: process.env.POSTGRES_USER,
-  password: process.env.POSTGRES_PASSWORD,
-  ssl: process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : false,
-  // Connection pool settings for serverless
-  max: 1, // Single connection for serverless
-  idleTimeoutMillis: 30000, // 30 seconds
-  connectionTimeoutMillis: 5000, // 5 seconds
-  maxUses: 7500, // Number of times a connection can be used before being destroyed
-}
+// Нова конфігурація: використовуємо DATABASE_URL, якщо він є, 
+// або збираємо окремі параметри (для зворотної сумісності)
+const dbConfig: PoolConfig = process.env.DATABASE_URL 
+  ? {
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+      // Налаштування для serverless (залишаємо ваші)
+      max: 1,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000,
+      maxUses: 7500,
+    }
+  : {
+      host: process.env.POSTGRES_HOST,
+      port: parseInt(process.env.POSTGRES_PORT || '5432'),
+      database: process.env.POSTGRES_DB,
+      user: process.env.POSTGRES_USER,
+      password: process.env.POSTGRES_PASSWORD,
+      ssl: process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : false,
+      max: 1,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000,
+      maxUses: 7500,
+    }
 
 // Connection pool instance
 let pool: Pool | null = null
@@ -25,13 +35,19 @@ let pool: Pool | null = null
 export async function getPool(): Promise<Pool> {
   if (!pool) {
     console.log('Creating new database pool...')
-    console.log('Database config:', {
-      host: dbConfig.host,
-      port: dbConfig.port,
-      database: dbConfig.database,
-      user: dbConfig.user,
-      ssl: dbConfig.ssl ? 'enabled' : 'disabled'
-    })
+    
+    // Безпечне логування (без пароля)
+    if (process.env.DATABASE_URL) {
+        console.log('Database connecting via DATABASE_URL')
+    } else {
+        console.log('Database config:', {
+          host: dbConfig.host,
+          port: dbConfig.port,
+          database: dbConfig.database,
+          user: dbConfig.user,
+          ssl: dbConfig.ssl ? 'enabled' : 'disabled'
+        })
+    }
     
     pool = new Pool(dbConfig)
     
@@ -59,18 +75,13 @@ export async function getPool(): Promise<Pool> {
 
 /**
  * Execute a database query with automatic connection management and timeout
- * @param query - SQL query string
- * @param params - Query parameters
- * @param timeout - Timeout in milliseconds (default: 10000ms)
- * @returns Query result
  */
-export async function executeQuery(query: string, params: (string | number)[] = [], timeout: number = 10000): Promise<QueryResult> {
+export async function executeQuery(query: string, params: any[] = [], timeout: number = 10000): Promise<QueryResult> {
   console.log('Executing query:', query.substring(0, 100) + '...')
   
   const pool = await getPool()
   
   return new Promise((resolve, reject) => {
-    // Set timeout
     const timeoutId = setTimeout(() => {
       console.error('Database query timeout after', timeout, 'ms')
       reject(new Error('Database query timeout'))
@@ -83,7 +94,7 @@ export async function executeQuery(query: string, params: (string | number)[] = 
         console.error('Database query error:', err)
         reject(err)
       } else {
-        console.log('Query executed successfully, rows:', result.rows.length)
+        console.log('Query executed successfully, rows:', result?.rows?.length || 0)
         resolve(result)
       }
     })
@@ -92,7 +103,6 @@ export async function executeQuery(query: string, params: (string | number)[] = 
 
 /**
  * Close the connection pool
- * Should be called when the application is shutting down
  */
 export async function closePool(): Promise<void> {
   if (pool) {
@@ -106,33 +116,21 @@ export async function closePool(): Promise<void> {
  * Database utility with common operations
  */
 export const db = {
-  /**
-   * Get a single record
-   */
-  async getOne<T = Record<string, unknown>>(query: string, params: (string | number)[] = [], timeout: number = 10000): Promise<T | null> {
+  async getOne<T = Record<string, any>>(query: string, params: any[] = [], timeout: number = 10000): Promise<T | null> {
     const result = await executeQuery(query, params, timeout)
     return result.rows[0] || null
   },
 
-  /**
-   * Get multiple records
-   */
-  async getMany<T = Record<string, unknown>>(query: string, params: (string | number)[] = [], timeout: number = 10000): Promise<T[]> {
+  async getMany<T = Record<string, any>>(query: string, params: any[] = [], timeout: number = 10000): Promise<T[]> {
     const result = await executeQuery(query, params, timeout)
     return result.rows
   },
 
-  /**
-   * Execute an insert, update, or delete query
-   */
-  async execute(query: string, params: (string | number)[] = [], timeout: number = 10000): Promise<QueryResult> {
+  async execute(query: string, params: any[] = [], timeout: number = 10000): Promise<QueryResult> {
     return await executeQuery(query, params, timeout)
   },
 
-  /**
-   * Get count of records
-   */
-  async getCount(query: string, params: (string | number)[] = [], timeout: number = 10000): Promise<number> {
+  async getCount(query: string, params: any[] = [], timeout: number = 10000): Promise<number> {
     const result = await executeQuery(query, params, timeout)
     return parseInt(result.rows[0]?.count || '0')
   }
@@ -140,4 +138,4 @@ export const db = {
 
 // For backward compatibility
 export const getClient = getPool
-export const closeConnection = closePool 
+export const closeConnection = closePool
