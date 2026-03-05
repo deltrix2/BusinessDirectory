@@ -1,5 +1,5 @@
 import { NextResponse, NextRequest } from "next/server"
-import { db } from '@/lib/database' // Імпортуємо наш утилітний клас
+import { Client } from 'pg'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url!)
@@ -17,7 +17,19 @@ export async function GET(req: NextRequest) {
   const accessibility = searchParams.get("accessibility")?.split(",").filter(Boolean) || []
   const paymentMethods = searchParams.get("paymentMethods")?.split(",").filter(Boolean) || []
 
+  // Get PostgreSQL client
+  const client = new Client({
+    host: process.env.POSTGRES_HOST,
+    port: parseInt(process.env.POSTGRES_PORT || '5432'),
+    database: process.env.POSTGRES_DB,
+    user: process.env.POSTGRES_USER,
+    password: process.env.POSTGRES_PASSWORD,
+    ssl: process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : false
+  });
+
   try {
+    await client.connect();
+
     // Build SQL query dynamically
     const whereClauses: string[] = []
     const params: (string | number)[] = []
@@ -47,6 +59,7 @@ export async function GET(req: NextRequest) {
 
     // Service options filtering
     if (serviceOptions.length > 0 || amenities.length > 0 || accessibility.length > 0 || paymentMethods.length > 0) {
+      // Add joins for each filter type separately
       if (serviceOptions.length > 0) {
         joins.push("JOIN business_service_options bso_service ON b.data_id = bso_service.business_id")
         joins.push("JOIN service_options so_service ON bso_service.option_id = so_service.option_id")
@@ -68,22 +81,28 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Filter by options
+    // Filter by service options
     if (serviceOptions.length > 0) {
       const placeholders = serviceOptions.map(() => `$${paramIndex++}`).join(",")
       whereClauses.push(`so_service.slug IN (${placeholders})`)
       params.push(...serviceOptions)
     }
+
+    // Filter by amenities (service options in amenities category)
     if (amenities.length > 0) {
       const placeholders = amenities.map(() => `$${paramIndex++}`).join(",")
       whereClauses.push(`(sc_amenities.slug = 'amenities' AND so_amenities.slug IN (${placeholders}))`)
       params.push(...amenities)
     }
+
+    // Filter by accessibility (service options in accessibility category)
     if (accessibility.length > 0) {
       const placeholders = accessibility.map(() => `$${paramIndex++}`).join(",")
       whereClauses.push(`(sc_accessibility.slug = 'accessibility' AND so_accessibility.slug IN (${placeholders}))`)
       params.push(...accessibility)
     }
+
+    // Filter by payment methods (service options in payments category)
     if (paymentMethods.length > 0) {
       const placeholders = paymentMethods.map(() => `$${paramIndex++}`).join(",")
       whereClauses.push(`(sc_payments.slug = 'payments' AND so_payments.slug IN (${placeholders}))`)
@@ -91,24 +110,27 @@ export async function GET(req: NextRequest) {
     }
 
     const where = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : ""
-    const joinClause = [...new Set(joins)].join(" ")
+    const joinClause = joins.length > 0 ? joins.join(" ") : ""
 
-    // Get total count
+    // Get total count with DISTINCT to avoid duplicates from joins
     const countQuery = `SELECT COUNT(DISTINCT b.data_id) as count FROM businesses b ${joinClause} ${where}`
-    const countResult = await db.execute(countQuery, params)
+    const countResult = await client.query(countQuery, params)
     const total = parseInt(countResult.rows[0]?.count || '0')
 
-    // Get paginated results
+    // Get paginated results with DISTINCT
     const query = `SELECT DISTINCT b.* FROM businesses b ${joinClause} ${where} LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`
     const queryParams = [...params, pageSize, offset]
-    const result = await db.execute(query, queryParams)
-    
-    return NextResponse.json({ total, businesses: result.rows })
+    const result = await client.query(query, queryParams)
+    const businesses = result.rows
+
+    await client.end()
+    return NextResponse.json({ total, businesses })
   } catch (error) {
     console.error('Database query error:', error);
+    await client.end()
     return NextResponse.json(
       { error: 'Database query failed', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     );
   }
-}
+} 
