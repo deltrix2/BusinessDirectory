@@ -1,5 +1,5 @@
 import { NextResponse, NextRequest } from "next/server"
-import { Client } from 'pg'
+import { db } from "@/lib/database"
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url!)
@@ -10,19 +10,7 @@ export async function GET(req: NextRequest) {
   // Filters
   const search = searchParams.get("search")?.toLowerCase() || ""
 
-  // Get PostgreSQL client
-  const client = new Client({
-    host: process.env.POSTGRES_HOST,
-    port: parseInt(process.env.POSTGRES_PORT || '5432'),
-    database: process.env.POSTGRES_DB,
-    user: process.env.POSTGRES_USER,
-    password: process.env.POSTGRES_PASSWORD,
-    ssl: process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : false
-  });
-
   try {
-    await client.connect();
-
     // Build SQL query dynamically
     const whereClauses: string[] = []
     const params: string[] = []
@@ -35,23 +23,23 @@ export async function GET(req: NextRequest) {
     const where = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : ""
 
     // Get total count
-    const countResult = await client.query(`SELECT COUNT(*) as count FROM categories ${where}`, params)
-    const total = parseInt(countResult.rows[0]?.count || '0')
+    const countQuery = `SELECT COUNT(*) as count FROM categories ${where}`
+    const total = await db.getCount(countQuery, params)
 
     // Get paginated results
     const query = `SELECT * FROM categories ${where} ORDER BY category_id ASC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`
-    const queryParams = [...params, pageSize, offset]
-    const result = await client.query(query, queryParams)
-    const categories = result.rows
+    const queryParams = [...params, pageSize.toString(), offset.toString()]
+    const categories = await db.getMany(query, queryParams)
 
-    await client.end()
     return NextResponse.json({ total, categories })
   } catch (error) {
-    console.error('Database query error:', error);
-    await client.end()
+    console.error('Database query error:', error)
     return NextResponse.json(
-      { error: 'Database query failed', details: error instanceof Error ? error.message : 'Unknown error' },
+      { 
+        error: 'Database query failed', 
+        details: error instanceof Error ? error.message : 'Unknown error' 
+      },
       { status: 500 }
-    );
+    )
   }
-} 
+}
